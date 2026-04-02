@@ -248,6 +248,38 @@ function Schema:PopulateHelpMenu(tabs)
 	end
 end
 
+net.Receive("ixScannerTakePhoto", function()
+	if (!IsValid(LocalPlayer()) or !IsValid(LocalPlayer().ixScanner)) then
+		return
+	end
+
+	local photoData = render.Capture({
+		format = "jpeg",
+		quality = 55,
+		x = 0,
+		y = 0,
+		w = ScrW(),
+		h = ScrH(),
+		alpha = false,
+		drawviewmodel = false,
+		drawhud = false
+	})
+
+	if (!photoData or #photoData < 1) then
+		return
+	end
+
+	if (#photoData > 60000) then
+		LocalPlayer():Notify("Scanner photo capture failed (image too large).")
+		return
+	end
+
+	net.Start("ixScannerSubmitPhoto")
+	net.WriteUInt(#photoData, 16)
+	net.WriteData(photoData, #photoData)
+	net.SendToServer()
+end)
+
 netstream.Hook("CombineDisplayMessage", function(text, color, arguments)
 	if (IsValid(ix.gui.combine)) then
 		ix.gui.combine:AddLine(text, color, nil, unpack(arguments))
