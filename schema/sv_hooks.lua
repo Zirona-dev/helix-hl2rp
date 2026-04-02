@@ -72,14 +72,19 @@ function Schema:PostPlayerLoadout(client)
 			client:SetHealth(150)
 			client:SetArmor(150)
 		elseif (client:IsScanner()) then
-			if (client.ixScanner:GetClass() == "npc_clawscanner") then
-				client:SetHealth(200)
-				client:SetMaxHealth(200)
-			end
+			-- Only apply scanner body rules while the player is actively deployed.
+			-- This prevents scanner-class players from losing their normal weapons/tools
+			-- after leaving scanner mode (e.g. via /exitscanner).
+			if (IsValid(client.ixScanner)) then
+				if (client.ixScanner:GetClass() == "npc_clawscanner") then
+					client:SetHealth(200)
+					client:SetMaxHealth(200)
+				end
 
-			client.ixScanner:SetHealth(client:Health())
-			client.ixScanner:SetMaxHealth(client:GetMaxHealth())
-			client:StripWeapons()
+				client.ixScanner:SetHealth(client:Health())
+				client.ixScanner:SetMaxHealth(client:GetMaxHealth())
+				client:StripWeapons()
+			end
 		else
 			client:SetArmor(self:IsCombineRank(client:Name(), "RCT") and 50 or 100)
 		end
@@ -317,6 +322,15 @@ local SCANNER_SOUNDS = {
 	"npc/scanner/cbot_servochatter.wav"
 }
 
+util.AddNetworkString("ixScannerTakePhoto")
+util.AddNetworkString("ixScannerSubmitPhoto")
+
+local function EnsureScannerPhotoDirectory()
+	if (!file.Exists("ix_scanner_photos", "DATA")) then
+		file.CreateDir("ix_scanner_photos")
+	end
+end
+
 function Schema:KeyPress(client, key)
 	if (IsValid(client.ixScanner) and (client.ixScannerDelay or 0) < CurTime()) then
 		local source
@@ -324,6 +338,11 @@ function Schema:KeyPress(client, key)
 		if (key == IN_USE) then
 			source = SCANNER_SOUNDS[math.random(1, #SCANNER_SOUNDS)]
 			client.ixScannerDelay = CurTime() + 1.75
+		elseif (key == IN_ATTACK) then
+			source = "npc/scanner/scanner_photo"..math.random(1, 2)..".wav"
+			client.ixScannerDelay = CurTime() + 1.25
+			net.Start("ixScannerTakePhoto")
+			net.Send(client)
 		elseif (key == IN_RELOAD) then
 			source = "npc/scanner/scanner_talk"..math.random(1, 2)..".wav"
 			client.ixScannerDelay = CurTime() + 10
@@ -340,6 +359,35 @@ function Schema:KeyPress(client, key)
 		end
 	end
 end
+
+net.Receive("ixScannerSubmitPhoto", function(_, client)
+	if (!IsValid(client) or !IsValid(client.ixScanner)) then
+		return
+	end
+
+	local photoLength = net.ReadUInt(16)
+
+	if (photoLength < 1 or photoLength > 60000) then
+		return
+	end
+
+	local photoData = net.ReadData(photoLength)
+
+	if (!photoData or #photoData != photoLength) then
+		return
+	end
+
+	EnsureScannerPhotoDirectory()
+
+	local character = client:GetCharacter()
+	local characterID = character and character:GetID() or client:SteamID64()
+	local timestamp = os.date("%Y%m%d_%H%M%S") .. "_" .. math.floor(CurTime() * 100)
+	local fileName = string.format("ix_scanner_photos/%s_%s.jpg", characterID, timestamp)
+
+	file.Write(fileName, photoData)
+	client:SetNetVar("lastScannerPhoto", fileName)
+	client:Notify("Scanner photo captured and saved.")
+end)
 
 function Schema:PlayerSpawnObject(client)
 	if (client:IsRestricted() or IsValid(client.ixScanner)) then
